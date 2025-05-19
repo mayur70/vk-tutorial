@@ -13,10 +13,10 @@ target_compile_options(vk-tutorial PRIVATE -Wall -Wextra -Wpedantic)
 target_sources(vk-tutorial
 	PRIVATE
 	main.cpp
-	PRIVATE
-	FILE_SET CXX_MODULES
-	FILES
-	Applicaion.cppm
+#	PRIVATE
+#	FILE_SET CXX_MODULES
+#	FILES
+#	Applicaion.cppm
 )
 #LDFLAGS = -lglfw -lvulkan -ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi
 add_subdirectory("external/glfw" EXCLUDE_FROM_ALL)
