@@ -4,6 +4,7 @@
 #include <iostream>
 #include <optional>
 #include <set>
+#include <vulkan/vulkan_core.h>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -19,6 +20,12 @@ struct QueueFamilyIndices {
 	bool isComplete() const {
 		return graphicsFamily.has_value() && presentFamily.has_value();
 	}
+};
+
+struct SwapChainSupportDetails{
+	VkSurfaceCapabilitiesKHR capabilities;
+	std::vector<VkSurfaceFormatKHR> formats;
+	std::vector<VkPresentModeKHR> presentModes;
 };
 
 const uint32_t WIDTH = 800;
@@ -41,6 +48,9 @@ VkQueue presentQueue;
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
+};
+const std::vector<const char*> deviceExtensions = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 void keyCallback(GLFWwindow* w, int key, int scancode, int action, int mods) {
@@ -194,6 +204,35 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
 	return indices;
 }
 
+SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice vkDevice) {
+	SwapChainSupportDetails details;
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkDevice, surface, &details.capabilities);
+	uint32_t formatCount;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(vkDevice, surface, &formatCount, nullptr);
+	if(formatCount != 0) {
+		details.formats.resize(formatCount);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(vkDevice, surface, &formatCount, details.formats.data());
+	}
+	uint32_t presentaionModeCount;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(vkDevice, surface, &presentaionModeCount, nullptr);
+	if(presentaionModeCount != 0) {
+		details.presentModes.resize(presentaionModeCount);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(vkDevice, surface, &presentaionModeCount, details.presentModes.data());
+	}
+	return details;
+}
+
+bool checkDeviceExtensionSupport(VkPhysicalDevice vkDevice) {
+	uint32_t extensionCount;
+	vkEnumerateDeviceExtensionProperties(vkDevice, nullptr, &extensionCount, nullptr);
+	std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+	vkEnumerateDeviceExtensionProperties(vkDevice, nullptr, &extensionCount, availableExtensions.data());
+	std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+	for(const auto& extension: availableExtensions)
+		requiredExtensions.erase(extension.extensionName);
+	return requiredExtensions.empty();
+}
+
 bool isDeviceSuitable(VkPhysicalDevice device) {
 	VkPhysicalDeviceProperties deviceProperties;
 	VkPhysicalDeviceFeatures deviceFeatures;
@@ -201,8 +240,15 @@ bool isDeviceSuitable(VkPhysicalDevice device) {
 	vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
 	std::cout << "physical device: "<< deviceProperties.deviceName << std::endl;
 
+	bool extensionsSupported = checkDeviceExtensionSupport(device);
+	bool swapChainAdequate = false;
+	if(extensionsSupported) {
+		auto swapChainSupport = querySwapChainSupport(device);
+		swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+	}
+
 	QueueFamilyIndices indices = findQueueFamilies(device);
-	return indices.isComplete();
+	return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
 
 void pickPhysicalDevice() {
@@ -243,7 +289,8 @@ void createLogicalDevice() {
 	createInfo.pQueueCreateInfos = queueCreateInfos.data();
 	createInfo.queueCreateInfoCount = queueCreateInfos.size();
 	createInfo.pEnabledFeatures = &deviceFeatures;
-	createInfo.enabledExtensionCount = 0;
+	createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+	createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
 	if(vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS)
 		throw std::runtime_error("failed to create logical device!");
