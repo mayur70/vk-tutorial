@@ -392,6 +392,7 @@ void createSwapChain() {
 }
 
 void createImageViews() {
+	swapchainImageViews.resize(swapchainImages.size());
 	size_t i = 0;
 	for(const auto& swapchainImage: swapchainImages) {
 		VkImageViewCreateInfo createInfo{};
