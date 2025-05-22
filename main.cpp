@@ -4,6 +4,9 @@
 #include <iostream>
 #include <optional>
 #include <set>
+#include <cstdint>
+#include <limits>
+#include <algorithm>
 #include <vulkan/vulkan_core.h>
 
 #define GLFW_INCLUDE_VULKAN
@@ -39,15 +42,19 @@ VkDevice device;
 VkSurfaceKHR surface;
 VkQueue graphicsQueue;
 VkQueue presentQueue;
+VkSwapchainKHR swapChain;
+std::vector<VkImage> swapchainImages;
+VkFormat swapchainImageFormat;
+VkExtent2D swapchainExtent;
 
-#ifndef NDEBUG
+#ifdef NDEBUG
 	const bool enableValidationLayers = false;
 #else
 	const bool enableValidationLayers = true;
 #endif
 
 const std::vector<const char*> validationLayers = {
-	"VK_LAYER_KHRONOS_validation"
+	"VK_LAYER_KHRONOS_validation",
 };
 const std::vector<const char*> deviceExtensions = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME
@@ -70,7 +77,6 @@ void initWindow() {
 }
 
 bool checkValidationLayerSupport() {
-
 	uint32_t layerCount = 0;
 	vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 	std::vector<VkLayerProperties> availableLayers(layerCount);
@@ -83,7 +89,7 @@ bool checkValidationLayerSupport() {
 				break;
 			}
 		}
-		if(found)
+		if(!found)
 			return false;
 	}
 	return true;
@@ -145,6 +151,7 @@ void setupDebugMessenger() {
 }
 
 void createInstance() {
+	std::cout << "validation layer enabled: " << enableValidationLayers << '\n';
 	if(enableValidationLayers && !checkValidationLayerSupport()) {
 		throw std::runtime_error("validation layers requested but not available");
 	}
@@ -233,12 +240,43 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice vkDevice) {
 	return requiredExtensions.empty();
 }
 
+VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
+	for(const auto& availablePresentMode: availablePresentModes) {
+		if(availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+			return availablePresentMode;
+	}
+	return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
+	if(capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
+		return capabilities.currentExtent;
+	} else {
+		int width, height;
+		glfwGetFramebufferSize(window, &width, &height);
+		VkExtent2D actualExtent = {
+			static_cast<uint32_t>(width),
+			static_cast<uint32_t>(height)
+		};
+		actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+		actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+		return actualExtent;
+	}
+}
+
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+	for(const auto& availableFormat: availableFormats) {
+		if(availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+			return availableFormat;
+	}
+	return availableFormats[0];
+}
+
 bool isDeviceSuitable(VkPhysicalDevice device) {
 	VkPhysicalDeviceProperties deviceProperties;
 	VkPhysicalDeviceFeatures deviceFeatures;
 	vkGetPhysicalDeviceProperties(device, &deviceProperties);
 	vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
-	std::cout << "physical device: "<< deviceProperties.deviceName << std::endl;
 
 	bool extensionsSupported = checkDeviceExtensionSupport(device);
 	bool swapChainAdequate = false;
@@ -267,6 +305,9 @@ void pickPhysicalDevice() {
 	}
 	if(physicalDevice == VK_NULL_HANDLE)
 		throw std::runtime_error("failed to find suitable GPU!");
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(physicalDevice, &props); 
+	std::cout << "Physical Device selected: " << props.deviceName << '\n';
 }
 
 void createLogicalDevice() {
@@ -304,12 +345,58 @@ void createSurface() {
 	}
 }
 
+void createSwapChain() {
+	auto swapChainSupport = querySwapChainSupport(physicalDevice);
+	auto surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+	auto presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+	auto extent = chooseSwapExtent(swapChainSupport.capabilities);
+	auto imageCount = swapChainSupport.capabilities.minImageCount + 1;
+	if(swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+		imageCount = swapChainSupport.capabilities.maxImageCount;
+	}
+	VkSwapchainCreateInfoKHR createInfo{};
+	createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+	createInfo.surface = surface;
+	createInfo.minImageCount = imageCount;
+	createInfo.imageFormat = surfaceFormat.format;
+	createInfo.imageColorSpace = surfaceFormat.colorSpace;
+	createInfo.imageExtent = extent;
+	createInfo.imageArrayLayers = 1;
+	createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+	auto indices = findQueueFamilies(physicalDevice);
+	uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
+	if(indices.graphicsFamily != indices.presentFamily) {
+		createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+		createInfo.queueFamilyIndexCount = 2;
+		createInfo.pQueueFamilyIndices = queueFamilyIndices;
+	} else {
+		createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		createInfo.queueFamilyIndexCount = 0;
+		createInfo.pQueueFamilyIndices = nullptr;
+	}
+	createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+	createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+	createInfo.presentMode = presentMode;
+	createInfo.clipped = VK_TRUE;
+	createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+	if(vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create swapchain!");
+	}
+	vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+	swapchainImages.resize(imageCount);
+	vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapchainImages.data());
+	swapchainImageFormat = surfaceFormat.format;
+	swapchainExtent = extent;
+}
+
 void initVulkan() {
 	createInstance();
 	setupDebugMessenger();
 	createSurface();
 	pickPhysicalDevice();
 	createLogicalDevice();
+	createSwapChain();
 }
 
 void mainLoop() {
@@ -319,6 +406,7 @@ void mainLoop() {
 }
 
 void cleanup() {
+	vkDestroySwapchainKHR(device, swapChain, nullptr);
 	vkDestroyDevice(device, nullptr);
 	if(enableValidationLayers) {
 		destroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);

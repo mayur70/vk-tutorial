@@ -4,11 +4,12 @@ project(vk-tutorial)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_BUILD_TYPE debug)
 
+add_compile_definitions("$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
 
 add_executable(vk-tutorial)
 target_compile_options(vk-tutorial PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(vk-tutorial PRIVATE -g0)
 
 target_sources(vk-tutorial
 	PRIVATE
